@@ -7,11 +7,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-
 st.title("Incident Category Classifier")
 
+# ---------------------------
+# VALID CATEGORIES
+# ---------------------------
 
-# ---------- FIXED CATEGORY LIST ----------
 VALID_CATEGORIES = [
 "IT - System Access issue",
 "IT – System Version issue",
@@ -27,7 +28,71 @@ VALID_CATEGORIES = [
 ]
 
 
-# ---------- TEXT COLUMNS ----------
+# ---------------------------
+# KEYWORD RULE ENGINE
+# ---------------------------
+
+RULES = {
+"IT - System Access issue":[
+"login","access","permission","authorization"
+],
+
+"IT – Master Data/ mapping issue":[
+"mapping","master data mapping","mdm mapping"
+],
+
+"User - Mapping missing":[
+"mapping missing","no mapping"
+],
+
+"User – Master data delayed input":[
+"master data delay","delayed master data"
+],
+
+"User - Logic mistakes in excel vs system":[
+"excel mismatch","formula issue"
+],
+
+"User - Multiple versions issue in excel":[
+"multiple excel","duplicate file"
+],
+
+"IT – System Version issue":[
+"version issue","upgrade problem"
+],
+
+"User - Logic changes during ABP":[
+"logic change","abp logic"
+],
+
+"IT – Data entry handholding":[
+"how to enter","data entry help"
+],
+
+"User – Master data incorporation in system":[
+"add master data","incorporate master data"
+]
+}
+
+
+# ---------------------------
+# TEXT CLEANING
+# ---------------------------
+
+def clean_text(text):
+
+    text = str(text).lower()
+
+    text = re.sub(r'\n',' ',text)
+    text = re.sub(r'\s+',' ',text)
+
+    return text.strip()
+
+
+# ---------------------------
+# COMBINE TEXT FIELDS
+# ---------------------------
+
 TEXT_COLUMNS = [
 "Ticket Summary",
 "Ticket Details",
@@ -38,81 +103,69 @@ TEXT_COLUMNS = [
 "Solution"
 ]
 
-
-# ---------- TEXT CLEANING ----------
-def clean_text(text):
-
-    text = str(text).lower()
-
-    text = re.sub(r'\n', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-
-    return text.strip()
-
-
-# ---------- COMBINE TEXT ----------
 def combine_columns(df):
 
     available = [c for c in TEXT_COLUMNS if c in df.columns]
 
     if not available:
-        return pd.Series([""] * len(df))
+        return pd.Series([""]*len(df))
 
-    return df[available].fillna("").astype(str).agg(" ".join, axis=1)
+    return df[available].fillna("").astype(str).agg(" ".join,axis=1)
 
 
-# ---------- CATEGORY NORMALIZATION ----------
-def normalize_category(cat):
+# ---------------------------
+# RULE-BASED CLASSIFICATION
+# ---------------------------
 
-    cat = str(cat).strip()
+def rule_classifier(text):
 
-    for valid in VALID_CATEGORIES:
-        if cat.lower() in valid.lower() or valid.lower() in cat.lower():
-            return valid
+    for cat,keywords in RULES.items():
+
+        for k in keywords:
+
+            if k in text:
+
+                return cat
 
     return None
 
 
-# ---------- LOAD TRAINING DATA ----------
+# ---------------------------
+# TRAIN ML MODEL
+# ---------------------------
+
 train_df = pd.read_excel("issue category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
 
-train_df["Issue category"] = train_df["Issue category"].apply(normalize_category)
-
-train_df = train_df[train_df["Issue category"].notnull()]
-
-
 train_df["combined_text"] = combine_columns(train_df).apply(clean_text)
 
-train_df = train_df[train_df["combined_text"] != ""]
-
+train_df = train_df[train_df["combined_text"]!=""]
 
 X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
-
-# ---------- MACHINE LEARNING MODEL ----------
 model = Pipeline([
-("tfidf", TfidfVectorizer(
-    stop_words="english",
-    ngram_range=(1,2),
-    min_df=2
+("tfidf",TfidfVectorizer(
+stop_words="english",
+ngram_range=(1,2),
+min_df=2
 )),
-("clf", LogisticRegression(
-    max_iter=3000,
-    class_weight="balanced"
+("clf",LogisticRegression(
+max_iter=3000,
+class_weight="balanced"
 ))
 ])
 
+model.fit(X_train,y_train)
 
-model.fit(X_train, y_train)
-
-
-st.success("Model trained from historical categorized tickets")
+st.success("Model trained successfully")
 
 
-# ---------- FILE UPLOAD ----------
+# ---------------------------
+# FILE UPLOAD
+# ---------------------------
+
 uploaded_file = st.file_uploader("Upload Incident Excel File", type=["xlsx"])
 
 
@@ -127,52 +180,59 @@ if uploaded_file:
 
     for sheet in excel.sheet_names:
 
-        df = pd.read_excel(excel, sheet_name=sheet)
+        df = pd.read_excel(excel,sheet_name=sheet)
 
         df.columns = df.columns.str.strip()
 
         df["combined_text"] = combine_columns(df).apply(clean_text)
 
-
-        predictions = model.predict(df["combined_text"])
-
-        probs = model.predict_proba(df["combined_text"])
-
-        confidence = probs.max(axis=1)
+        predictions=[]
+        confidence=[]
 
 
-        df["Predicted Category"] = predictions
-        df["Confidence"] = confidence.round(3)
+        for text in df["combined_text"]:
+
+            # RULE FIRST
+            rule = rule_classifier(text)
+
+            if rule:
+                predictions.append(rule)
+                confidence.append(0.97)
+                continue
+
+            # ML FALLBACK
+            pred = model.predict([text])[0]
+
+            prob = model.predict_proba([text]).max()
+
+            predictions.append(pred)
+            confidence.append(round(prob,3))
 
 
-        # ---------- PROFESSIONAL SUMMARY ----------
-        def summarize(text):
-
-            words = text.split()
-
-            summary = " ".join(words[:20])
-
-            return summary.capitalize()
+        df["Predicted Category"]=predictions
+        df["Confidence"]=confidence
 
 
-        df["Rewritten Summary"] = df["combined_text"].apply(summarize)
+        # REWRITTEN SUMMARY
+        df["Rewritten Summary"]=df["combined_text"].apply(
+        lambda x:" ".join(x.split()[:20]).capitalize()
+        )
 
 
-        df.drop(columns=["combined_text"], inplace=True)
+        df.drop(columns=["combined_text"],inplace=True)
 
-
-        df.to_excel(writer, sheet_name=sheet, index=False)
+        df.to_excel(writer,sheet_name=sheet,index=False)
 
 
     writer.close()
 
 
-    st.success("Categorization completed successfully")
+    st.success("Categorization completed")
 
 
     st.download_button(
-        "Download Categorized Excel",
-        data=output.getvalue(),
-        file_name="categorized_incidents.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "Download Categorized File",
+    data=output.getvalue(),
+    file_name="categorized_incidents.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
