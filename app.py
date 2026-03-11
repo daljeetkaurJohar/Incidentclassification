@@ -9,7 +9,7 @@ st.title("AI Incident Category Classifier")
 # Load AI model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load training data
+# Load training dataset
 train_df = pd.read_excel("issue category.xlsx")
 
 train_text = train_df["Ticket Description"].astype(str)
@@ -21,18 +21,40 @@ st.success("Training dataset loaded")
 
 uploaded_file = st.file_uploader("Upload Incident File", type=["xlsx"])
 
-# columns that may contain useful text
+# Possible text columns in sheets
 TEXT_COLUMNS = [
-"Ticket Summary",
-"Ticket Details",
-"Ticket Description",
-"Solution",
-"Additional comments",
-"Work notes",
-"Remarks",
-"Support required for issues' closure",
-"Any reason for delay"
+    "Ticket Summary",
+    "Ticket Details",
+    "Ticket Description",
+    "Solution",
+    "Additional comments",
+    "Work notes",
+    "Remarks",
+    "Support required for issues' closure",
+    "Any reason for delay"
 ]
+
+# Rule based categorization (high precision)
+RULES = {
+    "IT – Master Data/ mapping issue": ["mapping", "master data", "mdm"],
+    "IT - System Access issue": ["login", "access", "permission", "authorization"],
+    "IT - System linkage issue": ["interface", "integration", "sync", "link"],
+    "IT – System Version issue": ["version", "upgrade", "patch"],
+    "User - Logic mistakes in excel vs system": ["excel", "formula", "calculation"],
+    "User - Multiple versions issue in excel": ["multiple file", "duplicate excel"],
+}
+
+def rule_based_category(text):
+
+    text = text.lower()
+
+    for category, keywords in RULES.items():
+        for k in keywords:
+            if k in text:
+                return category
+
+    return None
+
 
 if uploaded_file:
 
@@ -45,24 +67,35 @@ if uploaded_file:
 
         df = pd.read_excel(excel, sheet_name=sheet)
 
-        # find which text columns exist in this sheet
         available_cols = [c for c in TEXT_COLUMNS if c in df.columns]
 
         if len(available_cols) == 0:
+
             df["Predicted Category"] = "No text columns found"
             df.to_excel(writer, sheet_name=sheet, index=False)
             continue
 
-        # combine all text columns
+        # Combine useful columns
         df["combined_text"] = df[available_cols].astype(str).agg(" ".join, axis=1)
-
-        new_embeddings = model.encode(df["combined_text"].tolist())
 
         predictions = []
         confidence = []
 
-        for emb in new_embeddings:
+        embeddings = model.encode(df["combined_text"].tolist())
 
+        for i, emb in enumerate(embeddings):
+
+            text = df["combined_text"].iloc[i]
+
+            # 1. Rule based classification first
+            rule_cat = rule_based_category(text)
+
+            if rule_cat:
+                predictions.append(rule_cat)
+                confidence.append(0.95)
+                continue
+
+            # 2. AI similarity fallback
             sim = cosine_similarity([emb], train_embeddings)[0]
 
             idx = sim.argmax()
@@ -72,6 +105,9 @@ if uploaded_file:
 
         df["Predicted Category"] = predictions
         df["Confidence"] = confidence
+
+        # Add Updated Summary column
+        df["Updated Summary"] = df["combined_text"].str.slice(0,200)
 
         df.drop(columns=["combined_text"], inplace=True)
 
@@ -84,6 +120,6 @@ if uploaded_file:
     st.download_button(
         "Download Categorized File",
         data=output.getvalue(),
-        file_name="categorized_output.xlsx",
+        file_name="categorized_tickets.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
