@@ -1,5 +1,6 @@
 streamlit
 pandas
-openpyxl
 scikit-learn
-sentence-transformers
+openpyxl
+transformers
+torch
