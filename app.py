@@ -4,91 +4,63 @@ from io import BytesIO
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-st.title("AI Customer Support Ticket Analyzer")
+st.title("AI Ticket Categorization System")
 
-# Load AI model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Categories
-categories = [
-"IT - System linkage issue",
-"IT - System Access issue",
-"IT – System Version issue",
-"IT – Data entry handholding",
-"IT – Master Data/ mapping issue",
-"User - Mapping missing",
-"User – Master data delayed input",
-"User - Logic changes during ABP",
-"User – Master data incorporation in system",
-"User – System Knowledge Gap",
-"User - Logic mistakes in excel vs system",
-"User - Multiple versions issue in excel"
-]
+# Upload training file
+training_file = st.file_uploader("Upload training file (categorized tickets)", type=["xlsx"])
 
-# Encode categories
-category_embeddings = model.encode(categories)
+# Upload new file
+new_file = st.file_uploader("Upload new tickets file", type=["xlsx"])
 
+if training_file:
 
-def categorize_ticket(text):
+    train_df = pd.read_excel(training_file)
 
-    text = str(text)
+    X = train_df["Ticket Description"].astype(str)
+    y = train_df["Issue category"]
 
-    ticket_embedding = model.encode([text])
+    embeddings = model.encode(X.tolist())
 
-    similarity = cosine_similarity(ticket_embedding, category_embeddings)
+    st.success("Training data loaded")
 
-    index = similarity.argmax()
+    if new_file:
 
-    return categories[index]
+        new_excel = pd.ExcelFile(new_file)
 
+        output = BytesIO()
+        writer = pd.ExcelWriter(output, engine="openpyxl")
 
-def rewrite_summary(row):
+        for sheet in new_excel.sheet_names:
 
-    text = " ".join([str(v) for v in row if pd.notna(v)])
+            df = pd.read_excel(new_excel, sheet_name=sheet)
 
-    text = text.replace("\n", " ")
+            text = df["Ticket Description"].astype(str)
 
-    if len(text) > 200:
-        text = text[:200] + "..."
+            new_embeddings = model.encode(text.tolist())
 
-    return text
+            predictions = []
 
+            for emb in new_embeddings:
 
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+                sim = cosine_similarity([emb], embeddings)
 
-if uploaded_file:
+                idx = sim.argmax()
 
-    excel = pd.ExcelFile(uploaded_file)
+                predictions.append(y.iloc[idx])
 
-    output = BytesIO()
+            df["Predicted Category"] = predictions
 
-    writer = pd.ExcelWriter(output, engine="openpyxl")
+            df.to_excel(writer, sheet_name=sheet, index=False)
 
-    for sheet in excel.sheet_names:
+        writer.close()
 
-        df = pd.read_excel(excel, sheet_name=sheet)
+        st.success("Categorization Completed")
 
-        # Combine text columns
-        text_cols = df.select_dtypes(include="object").columns
-        df["combined_text"] = df[text_cols].astype(str).agg(" ".join, axis=1)
-
-        # Create Category column
-        df["Category"] = df["combined_text"].apply(categorize_ticket)
-
-        # Create NEW rewritten summary column
-        df["Rewritten Ticket Summary"] = df.apply(rewrite_summary, axis=1)
-
-        df.drop(columns=["combined_text"], inplace=True)
-
-        df.to_excel(writer, sheet_name=sheet, index=False)
-
-    writer.close()
-
-    st.success("Processing Completed")
-
-    st.download_button(
-        label="Download Updated Excel",
-        data=output.getvalue(),
-        file_name="Updated_Tickets.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        st.download_button(
+            "Download Categorized File",
+            data=output.getvalue(),
+            file_name="categorized_output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
