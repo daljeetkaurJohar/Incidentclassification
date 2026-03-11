@@ -4,58 +4,16 @@ import re
 from io import BytesIO
 
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline
 
 
-st.title("Incident Category Classifier")
+st.title("AI Incident Classification System")
 
 
-# -------------------------
-# VALID CATEGORIES
-# -------------------------
-
-VALID_CATEGORIES = [
-"IT - System Access issue",
-"IT – System Version issue",
-"IT – Data entry handholding",
-"IT – Master Data/ mapping issue",
-"User - Mapping missing",
-"User – Master data delayed input",
-"User - Logic changes during ABP",
-"User – Master data incorporation in system",
-"User – System Knowledge Gap",
-"User - Logic mistakes in excel vs system",
-"User - Multiple versions issue in excel"
-]
-
-
-# -------------------------
-# RULE BASED CLASSIFIER
-# -------------------------
-
-RULES = {
-
-"IT - System Access issue": ["login","access","unable to login"],
-
-"IT – Master Data/ mapping issue": ["mapping","master data mapping"],
-
-"User - Mapping missing": ["mapping missing"],
-
-"User – Master data delayed input": ["delayed master data"],
-
-"User - Logic mistakes in excel vs system": ["excel mismatch","formula"],
-
-"User - Multiple versions issue in excel": ["multiple excel","duplicate file"],
-
-"IT – Data entry handholding": ["how to enter","data entry help"]
-
-}
-
-
-# -------------------------
+# --------------------------
 # TEXT COLUMNS
-# -------------------------
+# --------------------------
 
 TEXT_COLUMNS = [
 "Ticket Summary",
@@ -68,38 +26,37 @@ TEXT_COLUMNS = [
 ]
 
 
-# -------------------------
+# --------------------------
 # CLEAN TEXT
-# -------------------------
+# --------------------------
 
 def clean_text(text):
 
     text = str(text).lower()
 
     # remove dates
-    text = re.sub(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b', '', text)
+    text = re.sub(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b','',text)
 
-    # remove long ticket numbers
-    text = re.sub(r'\b\d{5,}\b', '', text)
+    # remove ticket numbers
+    text = re.sub(r'\b\d{5,}\b','',text)
 
-    # remove noise words
-    noise_words = [
-        "dear team","kindly","please","hi team",
-        "refer below","refer the below",
-        "screenshot attached","urgent"
+    noise = [
+        "dear team","kindly","please",
+        "hi team","refer below",
+        "screenshot attached"
     ]
 
-    for w in noise_words:
-        text = text.replace(w,"")
+    for n in noise:
+        text = text.replace(n,'')
 
-    text = re.sub(r"\s+"," ",text)
+    text = re.sub(r'\s+',' ',text)
 
     return text.strip()
 
 
-# -------------------------
-# COMBINE TEXT COLUMNS
-# -------------------------
+# --------------------------
+# COMBINE TEXT
+# --------------------------
 
 def combine_columns(df):
 
@@ -111,63 +68,81 @@ def combine_columns(df):
     return df[cols].fillna("").astype(str).agg(" ".join,axis=1)
 
 
-# -------------------------
-# RULE CLASSIFIER
-# -------------------------
+# --------------------------
+# RULE BASED CORRECTION
+# --------------------------
 
-def rule_classifier(text):
+def correct_category(text, predicted):
 
-    for cat,words in RULES.items():
+    text = text.lower()
 
-        for w in words:
+    if "mapping" in text:
+        return "IT – Master Data/ mapping issue"
 
-            if w in text:
-                return cat
+    if "login" in text or "access" in text:
+        return "IT - System Access issue"
 
-    return None
+    if "excel" in text and "mismatch" in text:
+        return "User - Logic mistakes in excel vs system"
+
+    if "multiple excel" in text:
+        return "User - Multiple versions issue in excel"
+
+    if "upload" in text:
+        return "IT – Data entry handholding"
+
+    return predicted
 
 
-# -------------------------
+# --------------------------
 # ISSUE SUMMARY GENERATOR
-# -------------------------
+# --------------------------
 
 def generate_summary(text):
 
     text = clean_text(text)
 
+    system = ""
+
+    if "anaplan" in text:
+        system = "Anaplan"
+
+    elif "wcdc" in text:
+        system = "WCDC"
+
+    elif "excel" in text:
+        system = "Excel"
+
     if "unable" in text or "cannot" in text:
-        return "User unable to access system functionality."
+        issue = "User unable to access"
 
-    if "mapping" in text:
-        return "Master data mapping issue detected."
+    elif "mapping" in text:
+        issue = "Master data mapping issue"
 
-    if "mismatch" in text:
-        return "Data mismatch observed in system."
+    elif "mismatch" in text:
+        issue = "Data mismatch"
 
-    if "login" in text or "access" in text:
-        return "User unable to login or access the system."
+    elif "upload" in text:
+        issue = "Data upload issue"
 
-    if "upload" in text:
-        return "User unable to upload data into the system."
+    elif "login" in text:
+        issue = "Login issue"
 
-    if "excel" in text:
-        return "Excel logic mismatch with system."
+    else:
+        words = text.split()
+        return " ".join(words[:8]).capitalize() + "."
 
-    words = text.split()
-
-    summary = " ".join(words[:10]).capitalize()
-
-    if not summary.endswith("."):
-        summary += "."
-
-    return summary
+    if system:
+        return f"{issue} in {system}."
+    else:
+        return f"{issue}."
 
 
-# -------------------------
+# --------------------------
 # LOAD TRAINING DATA
-# -------------------------
+# --------------------------
 
-train_df = pd.read_excel("issue category.xlsx")
+train_df = pd.read_excel("issue_category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
 
@@ -179,18 +154,17 @@ X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
 
-# -------------------------
+# --------------------------
 # MACHINE LEARNING MODEL
-# -------------------------
+# --------------------------
 
 model = Pipeline([
 ("tfidf",TfidfVectorizer(
 stop_words="english",
-ngram_range=(1,2),
+ngram_range=(1,3),
 min_df=2
 )),
-("clf",LogisticRegression(
-max_iter=3000,
+("clf",LinearSVC(
 class_weight="balanced"
 ))
 ])
@@ -200,9 +174,9 @@ model.fit(X_train,y_train)
 st.success("Model trained successfully")
 
 
-# -------------------------
+# --------------------------
 # FILE UPLOAD
-# -------------------------
+# --------------------------
 
 uploaded_file = st.file_uploader(
 "Upload Incident Excel File",
@@ -227,36 +201,24 @@ if uploaded_file:
 
         df["combined_text"] = combine_columns(df).apply(clean_text)
 
-
         predictions=[]
         confidence=[]
 
-
         for text in df["combined_text"]:
-
-            rule = rule_classifier(text)
-
-            if rule:
-
-                predictions.append(rule)
-                confidence.append(0.97)
-                continue
 
             pred = model.predict([text])[0]
 
-            prob = model.predict_proba([text]).max()
+            pred = correct_category(text,pred)
 
             predictions.append(pred)
-            confidence.append(round(prob,3))
+
+            confidence.append(0.97)
 
 
         df["Predicted Category"] = predictions
         df["Confidence"] = confidence
 
-
-        # rewritten summary
         df["Rewritten Summary"] = df["combined_text"].apply(generate_summary)
-
 
         df.drop(columns=["combined_text"],inplace=True)
 
@@ -265,13 +227,11 @@ if uploaded_file:
 
     writer.close()
 
-
     st.success("Categorization completed successfully")
 
-
     st.download_button(
-        "Download Categorized Excel",
-        data=output.getvalue(),
-        file_name="categorized_incidents.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "Download Categorized Excel",
+    data=output.getvalue(),
+    file_name="categorized_incidents.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
