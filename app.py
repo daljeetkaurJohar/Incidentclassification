@@ -11,9 +11,9 @@ from sklearn.pipeline import Pipeline
 st.title("AI Incident Classification System")
 
 
-# --------------------------
-# TEXT COLUMNS
-# --------------------------
+# ----------------------------
+# TEXT COLUMNS USED
+# ----------------------------
 
 TEXT_COLUMNS = [
 "Ticket Summary",
@@ -26,9 +26,9 @@ TEXT_COLUMNS = [
 ]
 
 
-# --------------------------
+# ----------------------------
 # CLEAN TEXT
-# --------------------------
+# ----------------------------
 
 def clean_text(text):
 
@@ -37,9 +37,10 @@ def clean_text(text):
     # remove dates
     text = re.sub(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b','',text)
 
-    # remove ticket numbers
+    # remove long numbers / ids
     text = re.sub(r'\b\d{5,}\b','',text)
 
+    # remove noise phrases
     noise = [
         "dear team","kindly","please",
         "hi team","refer below",
@@ -54,9 +55,9 @@ def clean_text(text):
     return text.strip()
 
 
-# --------------------------
-# COMBINE TEXT
-# --------------------------
+# ----------------------------
+# COMBINE TEXT FIELDS
+# ----------------------------
 
 def combine_columns(df):
 
@@ -68,9 +69,9 @@ def combine_columns(df):
     return df[cols].fillna("").astype(str).agg(" ".join,axis=1)
 
 
-# --------------------------
-# RULE BASED CORRECTION
-# --------------------------
+# ----------------------------
+# RULE CORRECTION
+# ----------------------------
 
 def correct_category(text, predicted):
 
@@ -94,27 +95,46 @@ def correct_category(text, predicted):
     return predicted
 
 
-# --------------------------
-# ISSUE SUMMARY GENERATOR
-# --------------------------
+# ----------------------------
+# SUMMARY GENERATOR
+# ----------------------------
 
 def generate_summary(text):
 
-    text = clean_text(text)
+    text = str(text).lower()
+
+    # remove numbers
+    text = re.sub(r'\b\d+\b','',text)
+
+    text = text.replace("_"," ").replace("-"," ")
+
+    text = re.sub(r'\s+',' ',text).strip()
+
+    words = text.split()
+
+    # detect system/module
+    modules = [
+        "anaplan","wcdc","rm",
+        "excel","dispatch",
+        "segment","tsm","depreciation"
+    ]
 
     system = ""
 
-    if "anaplan" in text:
-        system = "Anaplan"
+    for m in modules:
+        if m in words:
+            system = m.upper()
+            break
 
-    elif "wcdc" in text:
-        system = "WCDC"
-
-    elif "excel" in text:
-        system = "Excel"
-
+    # detect issue
     if "unable" in text or "cannot" in text:
         issue = "User unable to access"
+
+    elif "login" in text:
+        issue = "Login issue"
+
+    elif "authorization" in text or "access" in text:
+        issue = "Authorization issue"
 
     elif "mapping" in text:
         issue = "Master data mapping issue"
@@ -125,24 +145,26 @@ def generate_summary(text):
     elif "upload" in text:
         issue = "Data upload issue"
 
-    elif "login" in text:
-        issue = "Login issue"
+    elif "not showing" in text or "missing" in text:
+        issue = "Report not visible"
 
     else:
-        words = text.split()
-        return " ".join(words[:8]).capitalize() + "."
+        issue = ""
 
-    if system:
-        return f"{issue} in {system}."
-    else:
+    if issue and system:
+        return f"{issue} in {system} module."
+
+    if issue:
         return f"{issue}."
 
+    return " ".join(words[:8]).capitalize() + "."
 
-# --------------------------
+
+# ----------------------------
 # LOAD TRAINING DATA
-# --------------------------
+# ----------------------------
 
-train_df = pd.read_excel("issue category.xlsx")
+train_df = pd.read_excel("issue_category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
 
@@ -154,9 +176,9 @@ X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
 
-# --------------------------
+# ----------------------------
 # MACHINE LEARNING MODEL
-# --------------------------
+# ----------------------------
 
 model = Pipeline([
 ("tfidf",TfidfVectorizer(
@@ -174,9 +196,9 @@ model.fit(X_train,y_train)
 st.success("Model trained successfully")
 
 
-# --------------------------
+# ----------------------------
 # FILE UPLOAD
-# --------------------------
+# ----------------------------
 
 uploaded_file = st.file_uploader(
 "Upload Incident Excel File",
