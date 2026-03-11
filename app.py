@@ -1,30 +1,69 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import re
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 st.title("AI Incident Category Classifier")
 
-# Load training dataset
-train_df = pd.read_excel("issue category.xlsx")
+# text columns used in training and prediction
+TEXT_COLUMNS = [
+"Ticket Summary",
+"Ticket Details",
+"Ticket Description",
+"Work notes",
+"Additional comments",
+"Remarks",
+"Solution"
+]
 
-train_df = train_df.dropna(subset=["Ticket Description","Issue category"])
+def clean_text(text):
 
-X_train = train_df["Ticket Description"].astype(str)
+    text = str(text)
+
+    text = text.lower()
+
+    text = re.sub(r'\n',' ',text)
+    text = re.sub(r'\s+',' ',text)
+
+    return text.strip()
+
+
+def combine_columns(df):
+
+    available = [c for c in TEXT_COLUMNS if c in df.columns]
+
+    if not available:
+        return pd.Series([""] * len(df))
+
+    return df[available].fillna("").astype(str).agg(" ".join, axis=1)
+
+
+# ---------- TRAIN MODEL ----------
+
+train_df = pd.read_excel("issue_category.xlsx")
+
+train_df.columns = train_df.columns.str.strip()
+
+train_df["combined_text"] = combine_columns(train_df).apply(clean_text)
+
+train_df = train_df[train_df["combined_text"] != ""]
+
+X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
-# High accuracy ML pipeline
 model = Pipeline([
 ("tfidf", TfidfVectorizer(
-        stop_words="english",
-        ngram_range=(1,3),        # single words + phrases
-        min_df=2                  # ignore rare noise
+    stop_words="english",
+    ngram_range=(1,2),
+    min_df=2
 )),
 ("clf", LogisticRegression(
-        max_iter=3000,
-        class_weight="balanced"  # fixes category imbalance
+    max_iter=3000,
+    class_weight="balanced"
 ))
 ])
 
@@ -32,19 +71,9 @@ model.fit(X_train, y_train)
 
 st.success("Model trained using historical categorized tickets")
 
-uploaded_file = st.file_uploader("Upload Incident File", type=["xlsx"])
+# ---------- PREDICTION ----------
 
-TEXT_COLUMNS = [
-"Ticket Summary",
-"Ticket Details",
-"Ticket Description",
-"Solution",
-"Additional comments",
-"Work notes",
-"Remarks",
-"Support required for issues' closure",
-"Any reason for delay"
-]
+uploaded_file = st.file_uploader("Upload Incident File", type=["xlsx"])
 
 if uploaded_file:
 
@@ -59,19 +88,7 @@ if uploaded_file:
 
         df.columns = df.columns.str.strip()
 
-        available_cols = [c for c in TEXT_COLUMNS if c in df.columns]
-
-        if len(available_cols) == 0:
-
-            df["Predicted Category"] = "No text columns"
-            df["Confidence"] = 0
-            df["Rewritten Summary"] = ""
-
-            df.to_excel(writer, sheet_name=sheet, index=False)
-            continue
-
-        # Combine ticket text
-        df["combined_text"] = df[available_cols].fillna("").astype(str).agg(" ".join, axis=1)
+        df["combined_text"] = combine_columns(df).apply(clean_text)
 
         predictions = model.predict(df["combined_text"])
         probs = model.predict_proba(df["combined_text"])
@@ -81,10 +98,16 @@ if uploaded_file:
         df["Predicted Category"] = predictions
         df["Confidence"] = confidence.round(3)
 
-        # rewritten summary
-        df["Rewritten Summary"] = df["combined_text"].apply(
-            lambda x: " ".join(x.split()[:25])
-        )
+        # improved rewritten summary
+        def summarize(text):
+
+            words = text.split()
+
+            summary = " ".join(words[:20])
+
+            return summary.capitalize()
+
+        df["Rewritten Summary"] = df["combined_text"].apply(summarize)
 
         df.drop(columns=["combined_text"], inplace=True)
 
