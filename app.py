@@ -36,7 +36,7 @@ try:
     model = train_model(reference_df)
     st.sidebar.success("✅ Reference Model Loaded")
 except Exception:
-    st.sidebar.error("⚠️ 'issue_category_sample.csv' not found.")
+    st.sidebar.error("⚠️ 'issue category.csv' not found.")
 
 # File Uploader
 uploaded_file = st.file_uploader("Upload New Issues File (CSV or XLSX)", type=["csv", "xlsx"])
