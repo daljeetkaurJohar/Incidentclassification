@@ -1,76 +1,87 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 import io
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import make_pipeline
 
-# --- Helper Functions ---
-def train_model(mapping_df):
-    """Trains the NLP model to recognize 'Issue category'."""
-    X = mapping_df['Ticket Description'].fillna('')
-    y = mapping_df['Issue category'].fillna('Uncategorized')
+# --- Core Logic ---
+
+def generate_clean_summary(text):
+    """Summarizes long descriptions into a short 'Update' string."""
+    if pd.isna(text) or text == "":
+        return "No description provided"
+    
+    # Extract the core action before the long list of parameters/materials
+    # e.g., "Helping users to update data like production numbers..." -> "Helping users to update data"
+    core = text.split("like")[0].split("-")[0].split(",")[0].strip()
+    
+    # Cap length for readability in Excel
+    return core[:75] + "..." if len(core) > 75 else core
+
+def train_classifier(mapping_df):
+    """Trains a model based on your provided Issue Category sheet."""
+    # Clean data: drop rows missing description or category
+    df_clean = mapping_df.dropna(subset=['Ticket Description', 'Issue category'])
+    
+    X = df_clean['Ticket Description']
+    y = df_clean['Issue category']
+    
+    # Create an NLP pipeline
     model = make_pipeline(TfidfVectorizer(stop_words='english'), MultinomialNB())
     model.fit(X, y)
     return model
 
-def generate_summary(text):
-    """Creates a brief summary by extracting the first relevant phrase."""
-    if pd.isna(text): return ""
-    # Simple logic: extract the core action before the first hyphen or long list
-    summary = text.split('-')[0].split(',')[0]
-    return summary[:60] + "..." if len(summary) > 60 else summary
+# --- Streamlit Interface ---
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="ABP Issue Processor", layout="wide")
-st.title("📊 ABP Issue Processor & Summarizer")
+st.set_page_config(page_title="ABP Issue Categorizer", layout="wide")
+st.title("📑 ABP FY'27 Issue Categorizer & Summarizer")
 
-# Load the reference mapping (your provided CSV)
+# 1. Load Reference Data (Your mapping file)
 @st.cache_data
 def load_reference():
-    # Ensure your sample file is named 'issue_category_sample.csv'
-    return pd.read_csv("issue category.xlsx")
+    # Replace with the actual filename of your mapping CSV
+    return pd.read_csv("issue category.xlsx - Sheet1.csv")
 
 try:
-    reference_df = load_reference()
-    model = train_model(reference_df)
-    st.sidebar.success("✅ Reference Model Loaded")
-except Exception:
-    st.sidebar.error("⚠️ 'issue category.xlsx' not found.")
+    ref_df = load_reference()
+    model = train_classifier(ref_df)
+    st.sidebar.success("✅ Categorization Model Active")
+except Exception as e:
+    st.sidebar.error("⚠️ Mapping file not found. Please ensure 'issue category.xlsx - Sheet1.csv' is in the folder.")
 
-# File Uploader
-uploaded_file = st.file_uploader("Upload New Issues File (CSV or XLSX)", type=["csv", "xlsx"])
+# 2. File Upload for New Issues
+uploaded_file = st.file_uploader("Upload New Issue List", type=["csv", "xlsx"])
 
 if uploaded_file:
-    # Read file based on extension
+    # Read input
     if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
+        input_df = pd.read_csv(uploaded_file)
     else:
-        df = pd.read_excel(uploaded_file)
+        input_df = pd.read_excel(uploaded_file)
 
-    if 'Ticket Description' in df.columns:
-        with st.spinner('Categorizing and Summarizing...'):
-            # 1. Predict Category
-            df['Predicted Category'] = model.predict(df['Ticket Description'].fillna(''))
+    if 'Ticket Description' in input_df.columns:
+        with st.spinner('Processing categories and summaries...'):
+            # Predict Category using the trained model
+            input_df['Categorized Issue'] = model.predict(input_df['Ticket Description'].fillna(""))
             
-            # 2. Generate Summary Update
-            df['Update Summary'] = df['Ticket Description'].apply(generate_summary)
+            # Generate the summary update
+            input_df['Update Summary'] = input_df['Ticket Description'].apply(generate_clean_summary)
 
-        st.subheader("Processed Data Preview")
-        st.dataframe(df[['Ticket Description', 'Predicted Category', 'Update Summary']].head(10))
+        st.subheader("Preview of Categorized Data")
+        st.dataframe(input_df[['Ticket Description', 'Categorized Issue', 'Update Summary']].head(10))
 
-        # 3. Excel Download Option
-        # We use a buffer to allow downloading without saving a file to disk
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Categorized Issues')
+        # 3. Export to Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            input_df.to_excel(writer, index=False, sheet_name='Update_Categorized')
         
         st.divider()
         st.download_button(
             label="📥 Download Updated XLSX",
-            data=buffer.getvalue(),
-            file_name="ABP_Categorized_Update.xlsx",
+            data=output.getvalue(),
+            file_name="ABP_Categorized_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.error("Error: The file must contain a 'Ticket Description' column.")
+        st.error("Error: Uploaded file must have a 'Ticket Description' column.")
