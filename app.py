@@ -4,63 +4,60 @@ from io import BytesIO
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-st.title("AI Ticket Categorization System")
+st.title("AI Ticket Categorization")
 
+# Load AI model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Upload training file
-training_file = st.file_uploader("Upload training file (categorized tickets)", type=["xlsx"])
+# Load training data from repo
+train_df = pd.read_excel("issue_category.xlsx")
 
-# Upload new file
-new_file = st.file_uploader("Upload new tickets file", type=["xlsx"])
+X = train_df["Ticket Description"].astype(str)
+y = train_df["Issue category"]
 
-if training_file:
+train_embeddings = model.encode(X.tolist())
 
-    train_df = pd.read_excel(training_file)
+st.success("Training data loaded")
 
-    X = train_df["Ticket Description"].astype(str)
-    y = train_df["Issue category"]
+# User uploads new file
+uploaded_file = st.file_uploader("Upload new ticket file", type=["xlsx"])
 
-    embeddings = model.encode(X.tolist())
+if uploaded_file:
 
-    st.success("Training data loaded")
+    excel = pd.ExcelFile(uploaded_file)
 
-    if new_file:
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine="openpyxl")
 
-        new_excel = pd.ExcelFile(new_file)
+    for sheet in excel.sheet_names:
 
-        output = BytesIO()
-        writer = pd.ExcelWriter(output, engine="openpyxl")
+        df = pd.read_excel(excel, sheet_name=sheet)
 
-        for sheet in new_excel.sheet_names:
+        text = df["Ticket Description"].astype(str)
 
-            df = pd.read_excel(new_excel, sheet_name=sheet)
+        new_embeddings = model.encode(text.tolist())
 
-            text = df["Ticket Description"].astype(str)
+        predictions = []
 
-            new_embeddings = model.encode(text.tolist())
+        for emb in new_embeddings:
 
-            predictions = []
+            sim = cosine_similarity([emb], train_embeddings)
 
-            for emb in new_embeddings:
+            idx = sim.argmax()
 
-                sim = cosine_similarity([emb], embeddings)
+            predictions.append(y.iloc[idx])
 
-                idx = sim.argmax()
+        df["Predicted Category"] = predictions
 
-                predictions.append(y.iloc[idx])
+        df.to_excel(writer, sheet_name=sheet, index=False)
 
-            df["Predicted Category"] = predictions
+    writer.close()
 
-            df.to_excel(writer, sheet_name=sheet, index=False)
+    st.success("Categorization Completed")
 
-        writer.close()
-
-        st.success("Categorization Completed")
-
-        st.download_button(
-            "Download Categorized File",
-            data=output.getvalue(),
-            file_name="categorized_output.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    st.download_button(
+        "Download Categorized File",
+        data=output.getvalue(),
+        file_name="categorized_output.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
