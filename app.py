@@ -1,125 +1,76 @@
-import streamlit as st
 import pandas as pd
-from io import BytesIO
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+import streamlit as st
+import io
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.pipeline import make_pipeline
 
-st.title("AI Incident Category Classifier")
+# --- Helper Functions ---
+def train_model(mapping_df):
+    """Trains the NLP model to recognize 'Issue category'."""
+    X = mapping_df['Ticket Description'].fillna('')
+    y = mapping_df['Issue category'].fillna('Uncategorized')
+    model = make_pipeline(TfidfVectorizer(stop_words='english'), MultinomialNB())
+    model.fit(X, y)
+    return model
 
-# Load AI model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+def generate_summary(text):
+    """Creates a brief summary by extracting the first relevant phrase."""
+    if pd.isna(text): return ""
+    # Simple logic: extract the core action before the first hyphen or long list
+    summary = text.split('-')[0].split(',')[0]
+    return summary[:60] + "..." if len(summary) > 60 else summary
 
-# Load training dataset
-train_df = pd.read_excel("issue category.xlsx")
+# --- Streamlit UI ---
+st.set_page_config(page_title="ABP Issue Processor", layout="wide")
+st.title("📊 ABP Issue Processor & Summarizer")
 
-train_text = train_df["Ticket Description"].astype(str)
-train_labels = train_df["Issue category"]
+# Load the reference mapping (your provided CSV)
+@st.cache_data
+def load_reference():
+    # Ensure your sample file is named 'issue_category_sample.csv'
+    return pd.read_csv("issue category.csv")
 
-train_embeddings = model.encode(train_text.tolist())
+try:
+    reference_df = load_reference()
+    model = train_model(reference_df)
+    st.sidebar.success("✅ Reference Model Loaded")
+except Exception:
+    st.sidebar.error("⚠️ 'issue_category_sample.csv' not found.")
 
-st.success("Training dataset loaded")
-
-uploaded_file = st.file_uploader("Upload Incident File", type=["xlsx"])
-
-# Possible text columns in sheets
-TEXT_COLUMNS = [
-    "Ticket Summary",
-    "Ticket Details",
-    "Ticket Description",
-    "Solution",
-    "Additional comments",
-    "Work notes",
-    "Remarks",
-    "Support required for issues' closure",
-    "Any reason for delay"
-]
-
-# Rule based categorization (high precision)
-RULES = {
-    "IT – Master Data/ mapping issue": ["mapping", "master data", "mdm"],
-    "IT - System Access issue": ["login", "access", "permission", "authorization"],
-    "IT - System linkage issue": ["interface", "integration", "sync", "link"],
-    "IT – System Version issue": ["version", "upgrade", "patch"],
-    "User - Logic mistakes in excel vs system": ["excel", "formula", "calculation"],
-    "User - Multiple versions issue in excel": ["multiple file", "duplicate excel"],
-}
-
-def rule_based_category(text):
-
-    text = text.lower()
-
-    for category, keywords in RULES.items():
-        for k in keywords:
-            if k in text:
-                return category
-
-    return None
-
+# File Uploader
+uploaded_file = st.file_uploader("Upload New Issues File (CSV or XLSX)", type=["csv", "xlsx"])
 
 if uploaded_file:
+    # Read file based on extension
+    if uploaded_file.name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
 
-    excel = pd.ExcelFile(uploaded_file)
+    if 'Ticket Description' in df.columns:
+        with st.spinner('Categorizing and Summarizing...'):
+            # 1. Predict Category
+            df['Predicted Category'] = model.predict(df['Ticket Description'].fillna(''))
+            
+            # 2. Generate Summary Update
+            df['Update Summary'] = df['Ticket Description'].apply(generate_summary)
 
-    output = BytesIO()
-    writer = pd.ExcelWriter(output, engine="openpyxl")
+        st.subheader("Processed Data Preview")
+        st.dataframe(df[['Ticket Description', 'Predicted Category', 'Update Summary']].head(10))
 
-    for sheet in excel.sheet_names:
-
-        df = pd.read_excel(excel, sheet_name=sheet)
-
-        available_cols = [c for c in TEXT_COLUMNS if c in df.columns]
-
-        if len(available_cols) == 0:
-
-            df["Predicted Category"] = "No text columns found"
-            df.to_excel(writer, sheet_name=sheet, index=False)
-            continue
-
-        # Combine useful columns
-        df["combined_text"] = df[available_cols].astype(str).agg(" ".join, axis=1)
-
-        predictions = []
-        confidence = []
-
-        embeddings = model.encode(df["combined_text"].tolist())
-
-        for i, emb in enumerate(embeddings):
-
-            text = df["combined_text"].iloc[i]
-
-            # 1. Rule based classification first
-            rule_cat = rule_based_category(text)
-
-            if rule_cat:
-                predictions.append(rule_cat)
-                confidence.append(0.95)
-                continue
-
-            # 2. AI similarity fallback
-            sim = cosine_similarity([emb], train_embeddings)[0]
-
-            idx = sim.argmax()
-
-            predictions.append(train_labels.iloc[idx])
-            confidence.append(round(float(sim[idx]),3))
-
-        df["Predicted Category"] = predictions
-        df["Confidence"] = confidence
-
-        # Add Updated Summary column
-        df["Updated Summary"] = df["combined_text"].str.slice(0,200)
-
-        df.drop(columns=["combined_text"], inplace=True)
-
-        df.to_excel(writer, sheet_name=sheet, index=False)
-
-    writer.close()
-
-    st.success("Categorization completed")
-
-    st.download_button(
-        "Download Categorized File",
-        data=output.getvalue(),
-        file_name="categorized_tickets.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # 3. Excel Download Option
+        # We use a buffer to allow downloading without saving a file to disk
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Categorized Issues')
+        
+        st.divider()
+        st.download_button(
+            label="📥 Download Updated XLSX",
+            data=buffer.getvalue(),
+            file_name="ABP_Categorized_Update.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.error("Error: The file must contain a 'Ticket Description' column.")
