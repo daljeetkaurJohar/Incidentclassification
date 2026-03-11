@@ -6,10 +6,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 st.title("AI Customer Support Ticket Analyzer")
 
-# Load AI embedding model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# Load AI model
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Categories
+# Ticket Categories
 categories = [
 "IT - System linkage issue",
 "IT - System Access issue",
@@ -25,11 +25,13 @@ categories = [
 "User - Multiple versions issue in excel"
 ]
 
-# Precompute category embeddings
+# Encode categories
 category_embeddings = model.encode(categories)
 
 
 def categorize_ticket(text):
+
+    text = str(text)
 
     ticket_embedding = model.encode([text])
 
@@ -40,43 +42,41 @@ def categorize_ticket(text):
     return categories[index]
 
 
-def rewrite_summary(text):
+def rewrite_summary(row):
 
-    text = str(text)
+    text = " ".join([str(v) for v in row if pd.notna(v)])
 
-    # Simple AI-like cleaning
     text = text.replace("\n"," ")
-    text = text.strip()
 
-    if len(text) > 180:
-        text = text[:180] + "..."
+    if len(text) > 200:
+        text = text[:200] + "..."
 
     return text
 
 
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 if uploaded_file:
 
     excel = pd.ExcelFile(uploaded_file)
 
     output = BytesIO()
+
     writer = pd.ExcelWriter(output, engine="openpyxl")
 
     for sheet in excel.sheet_names:
 
         df = pd.read_excel(excel, sheet_name=sheet)
 
-        text_columns = df.select_dtypes(include="object").columns
+        text_cols = df.select_dtypes(include="object").columns
 
-        df["combined_text"] = df[text_columns].astype(str).agg(" ".join, axis=1)
+        df["combined_text"] = df[text_cols].astype(str).agg(" ".join, axis=1)
 
-        # Categorize tickets
         df["Category"] = df["combined_text"].apply(categorize_ticket)
 
-        # Rewrite ticket summary
         if "Ticket Summary" in df.columns:
-            df["Ticket Summary"] = df["combined_text"].apply(rewrite_summary)
+
+            df["Ticket Summary"] = df.apply(rewrite_summary, axis=1)
 
         df.drop(columns=["combined_text"], inplace=True)
 
@@ -84,11 +84,11 @@ if uploaded_file:
 
     writer.close()
 
-    st.success("AI Processing Completed")
+    st.success("Processing completed")
 
     st.download_button(
         label="Download Updated Excel",
         data=output.getvalue(),
-        file_name="AI_Ticket_Analysis.xlsx",
+        file_name="Updated_Tickets.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
