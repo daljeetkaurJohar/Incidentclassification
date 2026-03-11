@@ -11,9 +11,9 @@ from sklearn.pipeline import Pipeline
 st.title("AI Incident Classification System")
 
 
-# ------------------------------------------------
-# ALL TEXT COLUMNS USED FOR CONTEXT
-# ------------------------------------------------
+# ---------------------------------------
+# TEXT COLUMNS USED FOR CONTEXT
+# ---------------------------------------
 
 TEXT_COLUMNS = [
 "Ticket Summary",
@@ -30,9 +30,9 @@ TEXT_COLUMNS = [
 ]
 
 
-# ------------------------------------------------
+# ---------------------------------------
 # CLEAN TEXT
-# ------------------------------------------------
+# ---------------------------------------
 
 def clean_text(text):
 
@@ -44,11 +44,10 @@ def clean_text(text):
     # remove long ids
     text = re.sub(r'\b\d{5,}\b','',text)
 
-    # remove noise phrases
     noise = [
-        "dear team","kindly","please","hi team",
-        "refer below","refer the below",
-        "screenshot attached"
+        "dear team","kindly","please",
+        "hi team","refer below",
+        "refer the below","screenshot attached"
     ]
 
     for n in noise:
@@ -59,23 +58,55 @@ def clean_text(text):
     return text.strip()
 
 
-# ------------------------------------------------
-# COMBINE ALL TEXT COLUMNS
-# ------------------------------------------------
+# ---------------------------------------
+# COMBINE TEXT COLUMNS
+# ---------------------------------------
 
 def combine_columns(df):
 
-    cols = [c for c in TEXT_COLUMNS if c in df.columns]
+    available = [c for c in TEXT_COLUMNS if c in df.columns]
 
-    if not cols:
+    if not available:
         return pd.Series([""]*len(df))
 
-    return df[cols].fillna("").astype(str).agg(" ".join,axis=1)
+    return df[available].fillna("").astype(str).agg(" ".join,axis=1)
 
 
-# ------------------------------------------------
+# ---------------------------------------
+# LEARN KEYWORDS FROM TRAINING DATA
+# ---------------------------------------
+
+def learn_category_keywords(df):
+
+    keyword_dict = {}
+
+    for category in df["Issue category"].unique():
+
+        subset = df[df["Issue category"] == category]
+
+        text = " ".join(subset["combined_text"])
+
+        words = text.split()
+
+        freq = {}
+
+        for w in words:
+
+            if len(w) < 4:
+                continue
+
+            freq[w] = freq.get(w,0) + 1
+
+        sorted_words = sorted(freq,key=freq.get,reverse=True)
+
+        keyword_dict[category] = sorted_words[:10]
+
+    return keyword_dict
+
+
+# ---------------------------------------
 # STRONG RULE ENGINE
-# ------------------------------------------------
+# ---------------------------------------
 
 def rule_classifier(text):
 
@@ -83,41 +114,34 @@ def rule_classifier(text):
 
     # SYSTEM ACCESS
     if any(k in text for k in [
-        "login","log in","unable to login",
-        "access denied","permission",
-        "unable to access","cannot access"
+        "login","log-in","unable to login",
+        "unable to open","cannot open",
+        "access","permission","authorization"
     ]):
         return "IT - System Access issue"
 
-    # MAPPING
-    if "mapping missing" in text:
-        return "User - Mapping missing"
+    # SYSTEM LINKAGE
+    if any(k in text for k in [
+        "not flowing","not reflecting",
+        "not showing","missing",
+        "not coming","transfer not reflected"
+    ]):
+        return "IT – System linkage issue"
 
-    if "mapping" in text:
-        return "IT – Master Data/ mapping issue"
+    # LEARNED KEYWORDS
+    for category, keywords in category_keywords.items():
 
-    # EXCEL LOGIC
-    if "excel" in text and "mismatch" in text:
-        return "User - Logic mistakes in excel vs system"
+        for kw in keywords:
 
-    # MULTIPLE FILES
-    if "multiple excel" in text or "multiple version" in text:
-        return "User - Multiple versions issue in excel"
-
-    # MASTER DATA DELAY
-    if "delayed master data" in text or "master data delay" in text:
-        return "User – Master data delayed input"
-
-    # DATA ENTRY
-    if "upload" in text or "data entry" in text:
-        return "IT – Data entry handholding"
+            if kw in text:
+                return category
 
     return None
 
 
-# ------------------------------------------------
+# ---------------------------------------
 # SUMMARY GENERATOR
-# ------------------------------------------------
+# ---------------------------------------
 
 def generate_summary(text):
 
@@ -143,9 +167,9 @@ def generate_summary(text):
     return " ".join(words[:10]).capitalize() + "."
 
 
-# ------------------------------------------------
+# ---------------------------------------
 # LOAD TRAINING DATA
-# ------------------------------------------------
+# ---------------------------------------
 
 train_df = pd.read_excel("issue category.xlsx")
 
@@ -159,9 +183,13 @@ X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
 
-# ------------------------------------------------
+# learn keywords
+category_keywords = learn_category_keywords(train_df)
+
+
+# ---------------------------------------
 # MACHINE LEARNING MODEL
-# ------------------------------------------------
+# ---------------------------------------
 
 model = Pipeline([
 ("tfidf",TfidfVectorizer(
@@ -177,9 +205,9 @@ model.fit(X_train,y_train)
 st.success("Model trained successfully")
 
 
-# ------------------------------------------------
+# ---------------------------------------
 # FILE UPLOAD
-# ------------------------------------------------
+# ---------------------------------------
 
 uploaded_file = st.file_uploader(
 "Upload Incident Excel File",
