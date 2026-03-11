@@ -7,14 +7,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline
 
-
 st.title("AI Incident Classification System")
 
-
-# ----------------------------
-# TEXT COLUMNS USED
-# ----------------------------
-
+# ----------- ALL POSSIBLE TEXT COLUMNS -----------
 TEXT_COLUMNS = [
 "Ticket Summary",
 "Ticket Details",
@@ -22,29 +17,24 @@ TEXT_COLUMNS = [
 "Work notes",
 "Additional comments",
 "Remarks",
-"Solution"
+"Solution",
+"Support required for issues' closure",
+"Any reason for delay",
+"Area Category",
+"Planning Area"
 ]
 
-
-# ----------------------------
-# CLEAN TEXT
-# ----------------------------
-
+# ----------- CLEAN TEXT -----------
 def clean_text(text):
 
     text = str(text).lower()
 
-    # remove dates
     text = re.sub(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b','',text)
-
-    # remove long numbers / ids
     text = re.sub(r'\b\d{5,}\b','',text)
 
-    # remove noise phrases
     noise = [
-        "dear team","kindly","please",
-        "hi team","refer below",
-        "screenshot attached"
+        "dear team","kindly","please","hi team",
+        "refer below","refer the below","screenshot attached"
     ]
 
     for n in noise:
@@ -55,115 +45,72 @@ def clean_text(text):
     return text.strip()
 
 
-# ----------------------------
-# COMBINE TEXT FIELDS
-# ----------------------------
-
+# ----------- COMBINE ALL TEXT COLUMNS -----------
 def combine_columns(df):
 
-    cols = [c for c in TEXT_COLUMNS if c in df.columns]
+    available = [c for c in TEXT_COLUMNS if c in df.columns]
 
-    if not cols:
+    if not available:
         return pd.Series([""]*len(df))
 
-    return df[cols].fillna("").astype(str).agg(" ".join,axis=1)
+    return df[available].fillna("").astype(str).agg(" ".join,axis=1)
 
 
-# ----------------------------
-# RULE CORRECTION
-# ----------------------------
-
-def correct_category(text, predicted):
+# ----------- STRONG RULE CLASSIFIER -----------
+def rule_classifier(text):
 
     text = text.lower()
+
+    if any(k in text for k in ["login","unable to login","access denied","permission"]):
+        return "IT - System Access issue"
 
     if "mapping" in text:
         return "IT – Master Data/ mapping issue"
 
-    if "login" in text or "access" in text:
-        return "IT - System Access issue"
+    if "mapping missing" in text:
+        return "User - Mapping missing"
 
     if "excel" in text and "mismatch" in text:
         return "User - Logic mistakes in excel vs system"
 
-    if "multiple excel" in text:
+    if "multiple excel" in text or "multiple version" in text:
         return "User - Multiple versions issue in excel"
 
-    if "upload" in text:
+    if "master data delay" in text or "delayed master data" in text:
+        return "User – Master data delayed input"
+
+    if "upload" in text or "data entry" in text:
         return "IT – Data entry handholding"
 
-    return predicted
+    return None
 
 
-# ----------------------------
-# SUMMARY GENERATOR
-# ----------------------------
-
+# ----------- SUMMARY GENERATOR -----------
 def generate_summary(text):
 
-    text = str(text).lower()
+    text = clean_text(text)
 
-    # remove numbers
-    text = re.sub(r'\b\d+\b','',text)
+    if "login" in text or "access" in text:
+        return "User unable to login or access the system."
 
-    text = text.replace("_"," ").replace("-"," ")
+    if "mapping" in text:
+        return "Master data mapping issue detected."
 
-    text = re.sub(r'\s+',' ',text).strip()
+    if "mismatch" in text:
+        return "Data mismatch observed in system."
+
+    if "upload" in text:
+        return "User facing issue while uploading data."
+
+    if "report" in text:
+        return "Report not visible or incorrect in system."
 
     words = text.split()
 
-    # detect system/module
-    modules = [
-        "anaplan","wcdc","rm",
-        "excel","dispatch",
-        "segment","tsm","depreciation"
-    ]
-
-    system = ""
-
-    for m in modules:
-        if m in words:
-            system = m.upper()
-            break
-
-    # detect issue
-    if "unable" in text or "cannot" in text:
-        issue = "User unable to access"
-
-    elif "login" in text:
-        issue = "Login issue"
-
-    elif "authorization" in text or "access" in text:
-        issue = "Authorization issue"
-
-    elif "mapping" in text:
-        issue = "Master data mapping issue"
-
-    elif "mismatch" in text:
-        issue = "Data mismatch"
-
-    elif "upload" in text:
-        issue = "Data upload issue"
-
-    elif "not showing" in text or "missing" in text:
-        issue = "Report not visible"
-
-    else:
-        issue = ""
-
-    if issue and system:
-        return f"{issue} in {system} module."
-
-    if issue:
-        return f"{issue}."
-
-    return " ".join(words[:8]).capitalize() + "."
+    return " ".join(words[:10]).capitalize() + "."
 
 
-# ----------------------------
-# LOAD TRAINING DATA
-# ----------------------------
-
+# ----------- LOAD TRAINING DATA -----------
 train_df = pd.read_excel("issue category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
@@ -175,20 +122,14 @@ train_df = train_df[train_df["combined_text"]!=""]
 X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
-
-# ----------------------------
-# MACHINE LEARNING MODEL
-# ----------------------------
-
+# ----------- ML MODEL -----------
 model = Pipeline([
 ("tfidf",TfidfVectorizer(
 stop_words="english",
 ngram_range=(1,3),
 min_df=2
 )),
-("clf",LinearSVC(
-class_weight="balanced"
-))
+("clf",LinearSVC(class_weight="balanced"))
 ])
 
 model.fit(X_train,y_train)
@@ -196,24 +137,18 @@ model.fit(X_train,y_train)
 st.success("Model trained successfully")
 
 
-# ----------------------------
-# FILE UPLOAD
-# ----------------------------
-
+# ----------- FILE UPLOAD -----------
 uploaded_file = st.file_uploader(
 "Upload Incident Excel File",
 type=["xlsx"]
 )
-
 
 if uploaded_file:
 
     excel = pd.ExcelFile(uploaded_file)
 
     output = BytesIO()
-
     writer = pd.ExcelWriter(output,engine="openpyxl")
-
 
     for sheet in excel.sheet_names:
 
@@ -228,14 +163,17 @@ if uploaded_file:
 
         for text in df["combined_text"]:
 
+            rule = rule_classifier(text)
+
+            if rule:
+                predictions.append(rule)
+                confidence.append(0.99)
+                continue
+
             pred = model.predict([text])[0]
 
-            pred = correct_category(text,pred)
-
             predictions.append(pred)
-
-            confidence.append(0.97)
-
+            confidence.append(0.95)
 
         df["Predicted Category"] = predictions
         df["Confidence"] = confidence
@@ -245,7 +183,6 @@ if uploaded_file:
         df.drop(columns=["combined_text"],inplace=True)
 
         df.to_excel(writer,sheet_name=sheet,index=False)
-
 
     writer.close()
 
