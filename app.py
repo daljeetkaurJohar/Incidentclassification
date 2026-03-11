@@ -1,141 +1,94 @@
 import streamlit as st
 import pandas as pd
-import torch
-import torch.nn.functional as F
-import joblib
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from io import BytesIO
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# -----------------------------
-# Load Model (cached)
-# -----------------------------
-@st.cache_resource
-def load_model():
-    tokenizer = AutoTokenizer.from_pretrained("model")
-    model = AutoModelForSequenceClassification.from_pretrained("model")
-    label_encoder = joblib.load("label_encoder.pkl")
-    model.eval()
-    return tokenizer, model, label_encoder
+st.title("AI Customer Support Ticket Analyzer")
 
-tokenizer, model, label_encoder = load_model()
+# Load AI embedding model
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# -----------------------------
-# Rule Dictionary
-# -----------------------------
-RULES = {
-    "System linkage issue": [
-        "not flowing", "not reflecting", "not appearing",
-        "unable to pull", "integration", "not pushed",
-        "version movement", "integrated version"
-    ],
-    "Mapping missing from user": [
-        "not mapped", "mapping not done"
-    ],
-    "Multiple versions issue in excel": [
-        "excel version", "difference in excel",
-        "rate difference"
-    ],
-    "Masterdata - delayed input from user": [
-        "rate missing", "material not visible",
-        "bulk rate", "new scheme addition"
-    ],
-    "User knowledge gap": [
-        "how to", "cannot see", "not visible"
-    ]
-}
+# Categories
+categories = [
+"IT - System linkage issue",
+"IT - System Access issue",
+"IT – System Version issue",
+"IT – Data entry handholding",
+"IT – Master Data/ mapping issue",
+"User - Mapping missing",
+"User – Master data delayed input",
+"User - Logic changes during ABP",
+"User – Master data incorporation in system",
+"User – System Knowledge Gap",
+"User - Logic mistakes in excel vs system",
+"User - Multiple versions issue in excel"
+]
 
-CONFIDENCE_THRESHOLD = 0.65
+# Precompute category embeddings
+category_embeddings = model.encode(categories)
 
-# -----------------------------
-# Rule Classification
-# -----------------------------
-def rule_based(text):
-    text = text.lower()
-    for category, keywords in RULES.items():
-        for kw in keywords:
-            if kw in text:
-                return category, 0.95, "Rule"
-    return None, None, None
 
-# -----------------------------
-# ML Classification
-# -----------------------------
-def ml_predict(text):
-    inputs = tokenizer(
-        text,
-        return_tensors="pt",
-        truncation=True,
-        padding=True,
-        max_length=256
-    )
+def categorize_ticket(text):
 
-    with torch.no_grad():
-        outputs = model(**inputs)
+    ticket_embedding = model.encode([text])
 
-    probs = F.softmax(outputs.logits, dim=1)
-    pred = torch.argmax(probs, dim=1).item()
-    confidence = probs[0][pred].item()
-    label = label_encoder.inverse_transform([pred])[0]
+    similarity = cosine_similarity(ticket_embedding, category_embeddings)
 
-    return label, confidence, "ML"
+    index = similarity.argmax()
 
-# -----------------------------
-# Hybrid Classification
-# -----------------------------
-def classify(text):
+    return categories[index]
 
-    # Rule First
-    rule_cat, rule_conf, rule_src = rule_based(text)
-    if rule_cat:
-        return rule_cat, rule_conf, rule_src
 
-    # ML Fallback
-    ml_cat, ml_conf, ml_src = ml_predict(text)
+def rewrite_summary(text):
 
-    if ml_conf >= CONFIDENCE_THRESHOLD:
-        return ml_cat, round(ml_conf, 3), ml_src
+    text = str(text)
 
-    return "Needs Manual Review", round(ml_conf, 3), "Review"
+    # Simple AI-like cleaning
+    text = text.replace("\n"," ")
+    text = text.strip()
 
-# -----------------------------
-# Streamlit UI
-# -----------------------------
-st.title("📊 Enterprise Ticket Classification System")
+    if len(text) > 180:
+        text = text[:180] + "..."
 
-uploaded_file = st.file_uploader("Upload Incident Excel File", type=["xlsx"])
+    return text
+
+
+uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 if uploaded_file:
 
-    df = pd.read_excel(uploaded_file)
+    excel = pd.ExcelFile(uploaded_file)
 
-    predictions = []
-    confidences = []
-    sources = []
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine="openpyxl")
 
-    for _, row in df.iterrows():
+    for sheet in excel.sheet_names:
 
-        text = " ".join([
-            str(row.get("Issue", "")),
-            str(row.get("Description", "")),
-            str(row.get("Remarks", "")),
-            str(row.get("Ticket Description", ""))
-        ])
+        df = pd.read_excel(excel, sheet_name=sheet)
 
-        cat, conf, src = classify(text)
+        text_columns = df.select_dtypes(include="object").columns
 
-        predictions.append(cat)
-        confidences.append(conf)
-        sources.append(src)
+        df["combined_text"] = df[text_columns].astype(str).agg(" ".join, axis=1)
 
-    df["Predicted Category"] = predictions
-    df["Confidence"] = confidences
-    df["Classification Source"] = sources
+        # Categorize tickets
+        df["Category"] = df["combined_text"].apply(categorize_ticket)
 
-    st.success("Classification Complete")
+        # Rewrite ticket summary
+        if "Ticket Summary" in df.columns:
+            df["Ticket Summary"] = df["combined_text"].apply(rewrite_summary)
 
-    st.dataframe(df.head())
+        df.drop(columns=["combined_text"], inplace=True)
 
-    output_file = "classified_output.xlsx"
-    df.to_excel(output_file, index=False)
+        df.to_excel(writer, sheet_name=sheet, index=False)
 
-    with open(output_file, "rb") as f:
-        st.download_button("Download Classified File", f, file_name=output_file)
+    writer.close()
+
+    st.success("AI Processing Completed")
+
+    st.download_button(
+        label="Download Updated Excel",
+        data=output.getvalue(),
+        file_name="AI_Ticket_Analysis.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
