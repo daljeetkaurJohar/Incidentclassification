@@ -7,13 +7,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline
 
-
 st.title("AI Incident Classification System")
 
-
-# ---------------------------------------
-# TEXT COLUMNS USED FOR CONTEXT
-# ---------------------------------------
+# ------------------------------------------------
+# TEXT COLUMNS USED
+# ------------------------------------------------
 
 TEXT_COLUMNS = [
 "Ticket Summary",
@@ -29,19 +27,15 @@ TEXT_COLUMNS = [
 "Planning Area"
 ]
 
-
-# ---------------------------------------
+# ------------------------------------------------
 # CLEAN TEXT
-# ---------------------------------------
+# ------------------------------------------------
 
 def clean_text(text):
 
     text = str(text).lower()
 
-    # remove dates
     text = re.sub(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b','',text)
-
-    # remove long ids
     text = re.sub(r'\b\d{5,}\b','',text)
 
     noise = [
@@ -57,91 +51,105 @@ def clean_text(text):
 
     return text.strip()
 
-
-# ---------------------------------------
-# COMBINE TEXT COLUMNS
-# ---------------------------------------
+# ------------------------------------------------
+# COMBINE TEXT FROM ALL COLUMNS
+# ------------------------------------------------
 
 def combine_columns(df):
 
-    available = [c for c in TEXT_COLUMNS if c in df.columns]
+    cols = [c for c in TEXT_COLUMNS if c in df.columns]
 
-    if not available:
+    if not cols:
         return pd.Series([""]*len(df))
 
-    return df[available].fillna("").astype(str).agg(" ".join,axis=1)
+    return df[cols].fillna("").astype(str).agg(" ".join,axis=1)
 
-
-# ---------------------------------------
-# LEARN KEYWORDS FROM TRAINING DATA
-# ---------------------------------------
-
-def learn_category_keywords(df):
-
-    keyword_dict = {}
-
-    for category in df["Issue category"].unique():
-
-        subset = df[df["Issue category"] == category]
-
-        text = " ".join(subset["combined_text"])
-
-        words = text.split()
-
-        freq = {}
-
-        for w in words:
-
-            if len(w) < 4:
-                continue
-
-            freq[w] = freq.get(w,0) + 1
-
-        sorted_words = sorted(freq,key=freq.get,reverse=True)
-
-        keyword_dict[category] = sorted_words[:10]
-
-    return keyword_dict
-
-
-# ---------------------------------------
-# STRONG RULE ENGINE
-# ---------------------------------------
+# ------------------------------------------------
+# RULE BASED CLASSIFIER
+# ------------------------------------------------
 
 def rule_classifier(text):
 
     text = text.lower()
 
-    # SYSTEM ACCESS
+    # ACCESS ISSUE
     if any(k in text for k in [
-        "login","log-in","unable to login",
-        "unable to open","cannot open",
-        "access","permission","authorization"
+        "login","log in","unable to login",
+        "unable to access","cannot access",
+        "access denied","permission",
+        "authorization","access request"
     ]):
         return "IT - System Access issue"
 
     # SYSTEM LINKAGE
     if any(k in text for k in [
         "not flowing","not reflecting",
-        "not showing","missing",
-        "not coming","transfer not reflected"
+        "not updating","not syncing",
+        "not coming","not showing",
+        "transfer not reflected"
     ]):
-        return "IT – System linkage issue"
+        return "IT - System linkage issue"
 
-    # LEARNED KEYWORDS
-    for category, keywords in category_keywords.items():
+    # VERSION ISSUE
+    if any(k in text for k in [
+        "version","upgrade","patch"
+    ]):
+        return "IT – System Version issue"
 
-        for kw in keywords:
+    # DATA ENTRY HELP
+    if any(k in text for k in [
+        "how to","data entry",
+        "upload help","how do i"
+    ]):
+        return "IT – Data entry handholding"
 
-            if kw in text:
-                return category
+    # MASTER DATA MAPPING
+    if "mapping" in text:
+        return "IT – Master Data/ mapping issue"
+
+    # USER MAPPING MISSING
+    if "mapping missing" in text:
+        return "User - Mapping missing"
+
+    # MASTER DATA DELAY
+    if any(k in text for k in [
+        "delayed master data","master data delay"
+    ]):
+        return "User – Master data delayed input"
+
+    # LOGIC CHANGE
+    if "logic change" in text:
+        return "User - Logic changes during ABP"
+
+    # MASTER DATA ADDITION
+    if any(k in text for k in [
+        "add master data","new master data"
+    ]):
+        return "User – Master data incorporation in system"
+
+    # EXCEL LOGIC
+    if any(k in text for k in [
+        "excel mismatch","cost sheet","excel logic"
+    ]):
+        return "User - Logic mistakes in excel vs system"
+
+    # MULTIPLE FILE
+    if any(k in text for k in [
+        "multiple excel","multiple version"
+    ]):
+        return "User - Multiple versions issue in excel"
+
+    # KNOWLEDGE GAP
+    if any(k in text for k in [
+        "training","need help","how to use"
+    ]):
+        return "User – System Knowledge Gap"
 
     return None
 
-
-# ---------------------------------------
+# ------------------------------------------------
 # SUMMARY GENERATOR
-# ---------------------------------------
+# ------------------------------------------------
 
 def generate_summary(text):
 
@@ -167,11 +175,11 @@ def generate_summary(text):
     return " ".join(words[:10]).capitalize() + "."
 
 
-# ---------------------------------------
-# LOAD TRAINING DATA
-# ---------------------------------------
+# ------------------------------------------------
+# TRAIN ML MODEL (fallback only)
+# ------------------------------------------------
 
-train_df = pd.read_excel("issue category.xlsx")
+train_df = pd.read_excel("issue_category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
 
@@ -181,15 +189,6 @@ train_df = train_df[train_df["combined_text"]!=""]
 
 X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
-
-
-# learn keywords
-category_keywords = learn_category_keywords(train_df)
-
-
-# ---------------------------------------
-# MACHINE LEARNING MODEL
-# ---------------------------------------
 
 model = Pipeline([
 ("tfidf",TfidfVectorizer(
@@ -204,16 +203,14 @@ model.fit(X_train,y_train)
 
 st.success("Model trained successfully")
 
-
-# ---------------------------------------
+# ------------------------------------------------
 # FILE UPLOAD
-# ---------------------------------------
+# ------------------------------------------------
 
 uploaded_file = st.file_uploader(
 "Upload Incident Excel File",
 type=["xlsx"]
 )
-
 
 if uploaded_file:
 
@@ -222,7 +219,6 @@ if uploaded_file:
     output = BytesIO()
 
     writer = pd.ExcelWriter(output,engine="openpyxl")
-
 
     for sheet in excel.sheet_names:
 
@@ -241,12 +237,12 @@ if uploaded_file:
 
             if rule:
                 predictions.append(rule)
-                confidence.append(0.99)
+                confidence.append(1.0)
 
             else:
                 pred = model.predict([text])[0]
                 predictions.append(pred)
-                confidence.append(0.95)
+                confidence.append(0.85)
 
         df["Predicted Category"] = predictions
         df["Confidence"] = confidence
@@ -262,8 +258,8 @@ if uploaded_file:
     st.success("Categorization completed successfully")
 
     st.download_button(
-    "Download Categorized Excel",
-    data=output.getvalue(),
-    file_name="categorized_incidents.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "Download Categorized Excel",
+        data=output.getvalue(),
+        file_name="categorized_incidents.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
