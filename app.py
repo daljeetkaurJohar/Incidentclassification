@@ -164,7 +164,7 @@ def generate_summary(text):
 # LOAD TRAINING DATA
 # ----------------------------
 
-train_df = pd.read_excel("issue_category.xlsx")
+train_df = pd.read_excel("issue category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
 
