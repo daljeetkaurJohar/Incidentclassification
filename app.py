@@ -10,7 +10,7 @@ st.title("AI Ticket Categorization")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Load training data from repo
-train_df = pd.read_excel("issue_category.xlsx")
+train_df = pd.read_excel("issue category.xlsx")
 
 X = train_df["Ticket Description"].astype(str)
 y = train_df["Issue category"]
