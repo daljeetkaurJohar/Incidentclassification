@@ -4,23 +4,35 @@ from io import BytesIO
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-st.title("AI Ticket Categorization")
+st.title("AI Incident Category Classifier")
 
 # Load AI model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load training data from repo
+# Load training data
 train_df = pd.read_excel("issue category.xlsx")
 
-X = train_df["Ticket Description"].astype(str)
-y = train_df["Issue category"]
+train_text = train_df["Ticket Description"].astype(str)
+train_labels = train_df["Issue category"]
 
-train_embeddings = model.encode(X.tolist())
+train_embeddings = model.encode(train_text.tolist())
 
-st.success("Training data loaded")
+st.success("Training dataset loaded")
 
-# User uploads new file
-uploaded_file = st.file_uploader("Upload new ticket file", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Incident File", type=["xlsx"])
+
+# columns that may contain useful text
+TEXT_COLUMNS = [
+"Ticket Summary",
+"Ticket Details",
+"Ticket Description",
+"Solution",
+"Additional comments",
+"Work notes",
+"Remarks",
+"Support required for issues' closure",
+"Any reason for delay"
+]
 
 if uploaded_file:
 
@@ -33,27 +45,41 @@ if uploaded_file:
 
         df = pd.read_excel(excel, sheet_name=sheet)
 
-        text = df["Ticket Description"].astype(str)
+        # find which text columns exist in this sheet
+        available_cols = [c for c in TEXT_COLUMNS if c in df.columns]
 
-        new_embeddings = model.encode(text.tolist())
+        if len(available_cols) == 0:
+            df["Predicted Category"] = "No text columns found"
+            df.to_excel(writer, sheet_name=sheet, index=False)
+            continue
+
+        # combine all text columns
+        df["combined_text"] = df[available_cols].astype(str).agg(" ".join, axis=1)
+
+        new_embeddings = model.encode(df["combined_text"].tolist())
 
         predictions = []
+        confidence = []
 
         for emb in new_embeddings:
 
-            sim = cosine_similarity([emb], train_embeddings)
+            sim = cosine_similarity([emb], train_embeddings)[0]
 
             idx = sim.argmax()
 
-            predictions.append(y.iloc[idx])
+            predictions.append(train_labels.iloc[idx])
+            confidence.append(round(float(sim[idx]),3))
 
         df["Predicted Category"] = predictions
+        df["Confidence"] = confidence
+
+        df.drop(columns=["combined_text"], inplace=True)
 
         df.to_excel(writer, sheet_name=sheet, index=False)
 
     writer.close()
 
-    st.success("Categorization Completed")
+    st.success("Categorization completed")
 
     st.download_button(
         "Download Categorized File",
