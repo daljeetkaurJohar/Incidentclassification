@@ -29,14 +29,14 @@ st.title("📊 ABP Issue Processor & Summarizer")
 @st.cache_data
 def load_reference():
     # Ensure your sample file is named 'issue_category_sample.csv'
-    return pd.read_csv("issue category.csv")
+    return pd.read_csv("issue category.xlsx")
 
 try:
     reference_df = load_reference()
     model = train_model(reference_df)
     st.sidebar.success("✅ Reference Model Loaded")
 except Exception:
-    st.sidebar.error("⚠️ 'issue category.csv' not found.")
+    st.sidebar.error("⚠️ 'issue category.xlsx' not found.")
 
 # File Uploader
 uploaded_file = st.file_uploader("Upload New Issues File (CSV or XLSX)", type=["csv", "xlsx"])
