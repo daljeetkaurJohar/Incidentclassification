@@ -7,9 +7,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 st.title("AI Customer Support Ticket Analyzer")
 
 # Load AI model
-model = SentenceTransformer('all-MiniLM-L6-v2')
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Ticket Categories
+# Categories
 categories = [
 "IT - System linkage issue",
 "IT - System Access issue",
@@ -46,7 +46,7 @@ def rewrite_summary(row):
 
     text = " ".join([str(v) for v in row if pd.notna(v)])
 
-    text = text.replace("\n"," ")
+    text = text.replace("\n", " ")
 
     if len(text) > 200:
         text = text[:200] + "..."
@@ -54,7 +54,7 @@ def rewrite_summary(row):
     return text
 
 
-uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 if uploaded_file:
 
@@ -68,15 +68,15 @@ if uploaded_file:
 
         df = pd.read_excel(excel, sheet_name=sheet)
 
+        # Combine text columns
         text_cols = df.select_dtypes(include="object").columns
-
         df["combined_text"] = df[text_cols].astype(str).agg(" ".join, axis=1)
 
+        # Create Category column
         df["Category"] = df["combined_text"].apply(categorize_ticket)
 
-        if "Ticket Summary" in df.columns:
-
-            df["Ticket Summary"] = df.apply(rewrite_summary, axis=1)
+        # Create NEW rewritten summary column
+        df["Rewritten Ticket Summary"] = df.apply(rewrite_summary, axis=1)
 
         df.drop(columns=["combined_text"], inplace=True)
 
@@ -84,7 +84,7 @@ if uploaded_file:
 
     writer.close()
 
-    st.success("Processing completed")
+    st.success("Processing Completed")
 
     st.download_button(
         label="Download Updated Excel",
