@@ -15,15 +15,22 @@ train_df = train_df.dropna(subset=["Ticket Description","Issue category"])
 X_train = train_df["Ticket Description"].astype(str)
 y_train = train_df["Issue category"]
 
-# ML pipeline
+# High accuracy ML pipeline
 model = Pipeline([
-("tfidf", TfidfVectorizer(stop_words="english")),
-("clf", LogisticRegression(max_iter=2000))
+("tfidf", TfidfVectorizer(
+        stop_words="english",
+        ngram_range=(1,3),        # single words + phrases
+        min_df=2                  # ignore rare noise
+)),
+("clf", LogisticRegression(
+        max_iter=3000,
+        class_weight="balanced"  # fixes category imbalance
+))
 ])
 
 model.fit(X_train, y_train)
 
-st.success("Training model ready")
+st.success("Model trained using historical categorized tickets")
 
 uploaded_file = st.file_uploader("Upload Incident File", type=["xlsx"])
 
@@ -63,11 +70,10 @@ if uploaded_file:
             df.to_excel(writer, sheet_name=sheet, index=False)
             continue
 
-        # combine text fields
+        # Combine ticket text
         df["combined_text"] = df[available_cols].fillna("").astype(str).agg(" ".join, axis=1)
 
         predictions = model.predict(df["combined_text"])
-
         probs = model.predict_proba(df["combined_text"])
 
         confidence = probs.max(axis=1)
@@ -76,7 +82,9 @@ if uploaded_file:
         df["Confidence"] = confidence.round(3)
 
         # rewritten summary
-        df["Rewritten Summary"] = df["combined_text"].apply(lambda x: " ".join(x.split()[:30]))
+        df["Rewritten Summary"] = df["combined_text"].apply(
+            lambda x: " ".join(x.split()[:25])
+        )
 
         df.drop(columns=["combined_text"], inplace=True)
 
