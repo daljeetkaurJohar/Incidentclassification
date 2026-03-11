@@ -7,13 +7,13 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-from transformers import pipeline
 
 st.title("AI Incident Category Classifier")
 
-# --------------------------
-# FIXED CATEGORY LIST
-# --------------------------
+
+# -----------------------
+# VALID CATEGORIES
+# -----------------------
 
 VALID_CATEGORIES = [
 "IT - System Access issue",
@@ -29,22 +29,43 @@ VALID_CATEGORIES = [
 "User - Multiple versions issue in excel"
 ]
 
-# --------------------------
+
+# -----------------------
 # RULE BASED ENGINE
-# --------------------------
+# -----------------------
 
 RULES = {
-"IT - System Access issue":["login","access","permission"],
-"IT – Master Data/ mapping issue":["mapping","master data mapping"],
-"User - Mapping missing":["mapping missing"],
-"User – Master data delayed input":["delayed master data"],
-"User - Logic mistakes in excel vs system":["excel mismatch","formula"],
-"User - Multiple versions issue in excel":["multiple excel","duplicate file"],
+
+"IT - System Access issue":[
+"login","access","permission"
+],
+
+"IT – Master Data/ mapping issue":[
+"mapping","master data mapping"
+],
+
+"User - Mapping missing":[
+"mapping missing"
+],
+
+"User – Master data delayed input":[
+"delayed master data"
+],
+
+"User - Logic mistakes in excel vs system":[
+"excel mismatch","formula"
+],
+
+"User - Multiple versions issue in excel":[
+"multiple excel","duplicate file"
+]
+
 }
 
-# --------------------------
+
+# -----------------------
 # TEXT COLUMNS
-# --------------------------
+# -----------------------
 
 TEXT_COLUMNS = [
 "Ticket Summary",
@@ -56,9 +77,10 @@ TEXT_COLUMNS = [
 "Solution"
 ]
 
-# --------------------------
-# TEXT CLEANING
-# --------------------------
+
+# -----------------------
+# CLEAN TEXT
+# -----------------------
 
 def clean_text(text):
 
@@ -69,22 +91,24 @@ def clean_text(text):
 
     return text.strip()
 
-# --------------------------
+
+# -----------------------
 # COMBINE TEXT
-# --------------------------
+# -----------------------
 
 def combine_columns(df):
 
-    cols = [c for c in TEXT_COLUMNS if c in df.columns]
+    available = [c for c in TEXT_COLUMNS if c in df.columns]
 
-    if not cols:
+    if not available:
         return pd.Series([""]*len(df))
 
-    return df[cols].fillna("").astype(str).agg(" ".join,axis=1)
+    return df[available].fillna("").astype(str).agg(" ".join,axis=1)
 
-# --------------------------
+
+# -----------------------
 # RULE CLASSIFIER
-# --------------------------
+# -----------------------
 
 def rule_classifier(text):
 
@@ -98,51 +122,38 @@ def rule_classifier(text):
 
     return None
 
-# --------------------------
-# LOAD SUMMARIZER
-# --------------------------
 
-@st.cache_resource
-def load_summarizer():
-
-    return pipeline(
-        "summarization",
-        model="facebook/bart-large-cnn"
-    )
-
-summarizer = load_summarizer()
-
-# --------------------------
+# -----------------------
 # SUMMARY GENERATOR
-# --------------------------
+# -----------------------
 
 def generate_summary(text):
 
     text = str(text)
 
-    if len(text) < 40:
-        return text
+    text = re.sub(r"\s+"," ",text).strip()
 
-    try:
+    sentences = re.split(r"[.?!]", text)
 
-        result = summarizer(
-            text,
-            max_length=40,
-            min_length=10,
-            do_sample=False
-        )
+    if len(sentences) > 1:
+        summary = sentences[0]
+    else:
+        words = text.split()
+        summary = " ".join(words[:18])
 
-        return result[0]["summary_text"]
+    summary = summary.strip()
 
-    except:
+    if len(summary) > 0:
+        summary = summary[0].upper() + summary[1:]
 
-        return text[:120]
+    return summary
 
-# --------------------------
+
+# -----------------------
 # LOAD TRAINING DATA
-# --------------------------
+# -----------------------
 
-train_df = pd.read_excel("issue category.xlsx")
+train_df = pd.read_excel("issue_category.xlsx")
 
 train_df.columns = train_df.columns.str.strip()
 
@@ -150,12 +161,14 @@ train_df["combined_text"] = combine_columns(train_df).apply(clean_text)
 
 train_df = train_df[train_df["combined_text"]!=""]
 
+
 X_train = train_df["combined_text"]
 y_train = train_df["Issue category"]
 
-# --------------------------
-# ML MODEL
-# --------------------------
+
+# -----------------------
+# MACHINE LEARNING MODEL
+# -----------------------
 
 model = Pipeline([
 ("tfidf",TfidfVectorizer(
@@ -169,18 +182,21 @@ class_weight="balanced"
 ))
 ])
 
+
 model.fit(X_train,y_train)
 
 st.success("Model trained successfully")
 
-# --------------------------
+
+# -----------------------
 # FILE UPLOAD
-# --------------------------
+# -----------------------
 
 uploaded_file = st.file_uploader(
 "Upload Incident Excel File",
 type=["xlsx"]
 )
+
 
 if uploaded_file:
 
@@ -190,6 +206,7 @@ if uploaded_file:
 
     writer = pd.ExcelWriter(output,engine="openpyxl")
 
+
     for sheet in excel.sheet_names:
 
         df = pd.read_excel(excel,sheet_name=sheet)
@@ -198,8 +215,10 @@ if uploaded_file:
 
         df["combined_text"] = combine_columns(df).apply(clean_text)
 
+
         predictions=[]
         confidence=[]
+
 
         for text in df["combined_text"]:
 
@@ -211,6 +230,7 @@ if uploaded_file:
                 confidence.append(0.97)
                 continue
 
+
             pred = model.predict([text])[0]
 
             prob = model.predict_proba([text]).max()
@@ -218,23 +238,29 @@ if uploaded_file:
             predictions.append(pred)
             confidence.append(round(prob,3))
 
+
         df["Predicted Category"] = predictions
         df["Confidence"] = confidence
 
+
         # rewritten summary
         df["Rewritten Summary"] = df["combined_text"].apply(generate_summary)
+
 
         df.drop(columns=["combined_text"],inplace=True)
 
         df.to_excel(writer,sheet_name=sheet,index=False)
 
+
     writer.close()
 
-    st.success("Categorization completed")
+
+    st.success("Categorization completed successfully")
+
 
     st.download_button(
-        "Download Categorized File",
-        data=output.getvalue(),
-        file_name="categorized_incidents.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "Download Categorized Excel",
+    data=output.getvalue(),
+    file_name="categorized_incidents.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
